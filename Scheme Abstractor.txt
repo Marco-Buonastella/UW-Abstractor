@@ -1,0 +1,430 @@
+#lang racket
+
+;; CS136 Spring 2015
+;; Assignment 1, Problem 5
+
+(require "uw-api.rkt")
+(provide course-desc online? course-sections course-capacity section-info 
+         room-status next-holiday)
+
+;; (course-desc subject catalog) Consumes a subject and catalog and produces
+;; the course's decription.
+;; course-desc: Str Nat -> Str
+
+;;(online? subject catalog)Consumes a subject and catalog and determines if the
+;; course is available online
+;; online?: Str Nat -> Bool
+
+;;(course-sections term subject catalog) Consumes a term, subject and catalog,
+;; and produces a string containing the section names of the course.
+;;course-sections: Nat Str Nat -> Str
+
+;;(course-capacity term subject catalog) Concumesa term, subject and catalog,
+;; and outputs a list of lists illustrating how "full" a course is.
+;;course-capacity: Nat Str Nat -> (listof (list Str Nat Nat))
+
+;;(section-info term subject catalog section) Consumes a term, a subject, a 
+;; catalog and a section, and produces information regarding the given section.
+;; section-info: Nat Str Nat Str -> Str
+
+;;(next-holiday date) Consumes a date and outputs the next upcoming holiday
+;;next-holiday: Str -> Str
+
+;;(room-status building room day time)Consumes a building, room, day and time,
+;; and determines in the room is free, or if there is a class during that time 
+;; period
+;;room-status: Str Nat Str Str -> Str
+
+
+
+;; IMPLEMENTATION ====================
+
+(define (course-desc subject catalog)
+(local
+  [(define result (uw-api (string-append "/courses/" subject "/" 
+                                         (number->string catalog))))
+   ;;(get-description lol) Consumes a list of lists lol, and produces the
+   ;; description of the given course.
+   ;;get-description: (listof (listof Str)) -> Str
+   (define (get-description lol)
+     (cond
+       [(empty? lol) #f]
+       [(string=? "description" (first (first lol))) (second (first lol))]
+       [else (get-description (rest lol))]))]
+  (get-description result)))
+
+(define (online? subject catalog)
+(local
+[(define result (uw-api (string-append "/courses/" subject "/" 
+                                     (number->string catalog))))
+ ;;---------------------------------------------------------------------------
+ ;;(is-online? lol) Concumes a list of lists, lol, and determines if the course 
+ ;; is available online.
+ ;;is-online?: (listof (listof Str)) -> Bool
+ (define (is-online? lol)
+(cond
+  [(empty? lol) #f]
+  [(and (string=? "offerings" (first (first lol)))
+        (not (empty? (filter (lambda (x) (string=? "online" (first x))) 
+                             (second (first lol))))))
+   (second (first (filter (lambda (x) (string=? "online" (first x))) 
+                          (second (first lol)))))]
+  [else (is-online? (rest lol))]))]
+(is-online? result)))
+
+;;----------------------------------------------------------------------------
+(define (course-sections term subject catalog)
+(local
+  [(define result 
+     (uw-api (string-append "/terms/" 
+             (number->string term) "/" subject "/" (number->string catalog) 
+                            "/schedule")))] 
+(map second 
+  (map first 
+       (map (lambda (y) 
+            (filter 
+               (lambda (x) (string=? "section" (first x))) y)) result)))))
+;;-----------------------------------------------------------------------------
+(define (course-capacity term subject catalog)
+  (local
+    [(define result 
+     (uw-api 
+     (string-append "/terms/" (number->string term) 
+                   "/" subject "/" (number->string catalog) "/schedule")))
+     ;;(get-info lol) Consumes a uw-api, and filters the lists for the items
+    ;; that contain section enrollment info.
+    ;;get-info: (listof (listof Str)) -> (listof (listof anyof Str Nat)) 
+    (define (get-info lol)
+     (map (lambda (y) (filter (lambda (x) (or
+                      (string=? "section" (first x))
+                      (string=? "enrollment_capacity"  (first x))
+                      (string=? "enrollment_total" (first x)))) y)) result))
+       ;;(member? x lst) Consumes a type x, and determines if it is in a list
+       ;; member?: Any (listof Any) -> Bool
+      (define (member? x lst)
+       (not (false? (member x lst))))
+   
+     ;;(is-tutorial? str) Consumes a string and determines if the given string
+     ;; is a symbol for a tutorial section.
+     ;;is-tutorial? Str -> Bool
+     (define (is-tutorial? str)
+     (cond
+       [(member? #\T (string->list str)) #t]
+     [else #f]))]
+(filter 
+ (lambda (x) (not (is-tutorial? (first x))))
+ (map (lambda (x) (list (second (first x))(second (second x))
+                        (second (third x))))(get-info result)))))
+;;-----------------------------------------------------------------------------
+(define (section-info term subject catalog section)
+  (local
+    [(define result (uw-api (string-append "/terms/" (number->string term) 
+                                           "/" subject "/" (number->string 
+                                                            catalog)                                                      "/schedule")))
+      ;;(member? x lst) Consumes a type x, and determines if it is in a list
+      ;; member?: Any (listof Any) -> Bool    
+     (define (member? x lst)
+       (not (false? (member x lst))))
+     
+     ;;(contains-section? lol) Consumes a list of list, lol, and determines if
+     ;; the given list contains the given section.
+     ;; contains-section?: (listof (listof Str)) -> Bool
+     (define (contains-section? lol)
+       (cond
+         [(empty? lol) #f]
+         [(member? section (first lol)) #t]
+         [else (contains-section? (rest lol))]))
+     (define classes (second (first 
+                              (filter (lambda (x) (string=? "classes" 
+                                                            (first x)))
+                                      (first (filter contains-section? 
+                                                     result))))))
+     (define get-date-list-single 
+       (first 
+         (rest 
+            (first 
+              (filter (lambda (x) (member? "date" x ))
+                (first (second (first (filter (lambda (x) (string=? "classes" 
+                                                                    (first x)))                       (first (filter contains-section? result)))))))))))
+     (define get-date-list-multiple-class 
+       (first
+        (rest 
+         (first 
+          (filter (lambda (x) (member? "date" x))
+            (first (second (first 
+                            (filter (lambda (x) (string=? "classes" (first x)))
+                                    (first (filter contains-section? 
+                                                   result)))))))))))
+     (define get-location-list 
+       (first
+        (rest (first (filter (lambda (x) (member? "location" x))
+                             (first classes))))))
+     (define get-instructors-list 
+       (first (filter (lambda (x) (member? "instructors" x))  (first classes))))
+ 
+     ;;(get-date-list lst) Consumes a list of classes lst, and determines the
+     ;; list of class date information based on the number of classes the course
+     ;; has.
+     ;; get-date-list: (listof (listof Str)) -> (listof (listof Str))
+     (define (get-date-list lst)
+       (cond
+         [(< 1 (length classes))
+          get-date-list-multiple-class]
+         [else get-date-list-single]))
+     
+     ;;(get-start-time lst) Concumes the uw-api and outputs the start-time of
+     ;; a given section.
+     ;; get-start-time: (listof (listof Str)) -> (listof (list Str))
+     (define (get-start-time lst)
+       (filter (lambda (x) (string=? "start_time" (first x))) lst))
+      
+     ;;(get-end-time lst) Concumes the uw-api and outputs the end-time of
+     ;; a given section.
+     ;; get-end-time: (listof (listof Str)) -> (listof (list Str))
+     (define (get-end-time lst)
+       (filter (lambda (x) (string=? "end_time" (first x))) lst))
+      
+     ;;(get-day lst) Concumes the uw-api and outputs the day of
+     ;; a given section.
+     ;; get-day: (listof (listof Str)) -> (listof (list Str))
+     (define (get-day lst)
+       (filter (lambda (x) (string=? "weekdays" (first x))) lst))
+     
+     ;;(get-building lst) Concumes the uw-api and outputs the building of
+     ;; a given section.
+     ;; get-building: (listof (listof Str)) -> (listof (list Str))
+     (define (get-building lst)
+       (filter (lambda (x) (string=? "building" (first x))) lst))
+     
+     ;;(get-room lst) Concumes the uw-api and outputs the room of
+     ;; a given section.
+     ;; get-room: (listof (listof Str)) -> (listof (list Str))
+     (define (get-room lst)
+       (filter (lambda (x) (string=? "room" (first x))) lst))
+     (define start-time (second (first 
+                                 (get-start-time (get-date-list result)))))
+     (define end-time (second (first (get-end-time (get-date-list result)))))
+     (define weekdays (second (first (get-day (get-date-list result)))))
+     (define building (second (first (get-building get-location-list))))
+     (define room (second (first (get-room get-location-list))))
+     (define instructor (first (second get-instructors-list)))]
+    
+ (string-append subject " " (number->string catalog) " " section " " start-time
+                "-" end-time
+                   " " weekdays " " building " " room " " instructor)))
+;;-----------------------------------------------------------------------------
+(define (next-holiday date)
+  (local
+    [(define result (uw-api "/events/holidays")) 
+     ;;(year date) Consumes a date and outputs the year
+     ;; year date: Str -> Nat
+     (define (year date)
+       (string->number (substring date 0 4)))
+      ;;(month date) Consumes a date and outputs the month
+      ;; month date: Str -> Nat
+     (define (month date)
+       (string->number (substring date 5 7)))
+      ;;(year day) Consumes a date and outputs the day
+      ;; year day: Str -> Nat
+     (define (day date)
+       (string->number (substring date 8 10)))    
+     (define filtered-list   
+       (filter (lambda (p) (not
+                            (and
+                             (= (month date)(month (second (first p))))
+                             (>= (day date)(day (second (first p)))))))
+               (filter (lambda (z) (>= 2 (- (month (second (first z)))
+                                            (month date)))) 
+                       (filter (lambda (y)(<= (month date)(month (second 
+                                                                  (first y))))) 
+                               (filter (lambda (x) 
+                                         (= (year date)
+                                         (year (second (first x))))) result)))))
+    
+    (define list-days (map (lambda (x) (day (second (first x))))filtered-list))
+    (define list-days-october (map (lambda (x) (day (second (first x)))) 
+                                   (filter (lambda (x) 
+                                             (not (= 10 (month (second (first x)                                                                        )))))filtered-list)))
+     ;;(find-min lst min-so-far)Consumes a list and outputs the smallest
+     ;;find-min: (listof Nat) Nat -> Nat
+     (define (find-min lst min-so-far)
+      (cond
+        [(empty? lst) min-so-far]
+        [(< (first lst) min-so-far)
+         (find-min (rest lst) (first lst))]
+        [else (find-min (rest lst) min-so-far)]))
+     ;;(min-day lst) Consumes a list of days and outputs the smallest
+     ;;min-day: (listof Nat) -> Nat
+     (define (min-day lst)
+      (cond
+        [(empty? lst) empty]
+        [else (find-min list-days (first list-days))]))
+      ;;(member? x lst) Consumes a type x, and determines if it is in a list
+      ;; member?: Any (listof Any) -> Bool  
+     (define (member? x lst)
+           (not (false? (member x lst))))
+     ;;(contains-october? lst) Consumes a list of dates and determines if
+     ;; october is among them
+     ;;contains-october?: (listof Nat) -> Bool
+     (define (contains-october? lst)
+      (member? 10 (map (lambda (x)(month (second (first x)))) filtered-list)))]
+  
+  (cond
+      [(or
+        (empty? list-days)
+        (empty? filtered-list))
+       (string-append (number->string (+ 1 (year date)))"-01-01" 
+                      " New Year's Day")]
+      [(= (length filtered-list) 1) (string-append 
+                                     (second (first (first filtered-list))) 
+                                     " " (second (second 
+                                                  (first filtered-list))))]
+      [(= (length filtered-list) 2)
+       (cond
+         [(= (month (second (first (first filtered-list))))
+             (month (second (first (second filtered-list)))))
+         (cond
+            [(< (day (second (first (first filtered-list))))
+                (day (second (first (second filtered-list)))))
+             (string-append (second (first (first filtered-list))) 
+                            " " (second (second (first filtered-list))))]
+            [else (string-append (second (first (second filtered-list))) 
+                              " " (second (second (second filtered-list))))])]
+         [(< (month (second (first (first filtered-list))))
+             (month (second (first (second filtered-list)))))
+          (string-append (second (first (first filtered-list))) 
+                         " " (second (second (first filtered-list))))]
+        [else (string-append (second (first (second filtered-list))) 
+                             " " (second (second (second filtered-list))))])]
+      [(= (length filtered-list) 3)
+       (cond
+         [(and
+           (< (month (second (first (first filtered-list))))
+              (month (second (first (second filtered-list)))))
+           (< (month (second (first (first filtered-list))))
+            (month (second (first (third filtered-list))))))
+        (string-append (second (first (first filtered-list))) 
+                       " " (second (second (first filtered-list))))]
+       [(and
+         (< (month (second (first (second filtered-list))))
+            (month (second (first (first filtered-list)))))
+         (< (month (second (first (second filtered-list))))
+            (month (second (first (third filtered-list))))))
+        (string-append (second (first (second filtered-list))) 
+                       " " (second (second (second filtered-list))))]
+       [else (string-append (second (first (third filtered-list))) 
+                            " " (second (second (third filtered-list))))])]
+    [(and
+      (contains-october? filtered-list)
+      (> (length filtered-list) 3))
+     (string-append (second 
+                     (first (first
+                             (filter (lambda (x) 
+                             (= (min-day list-days) (day (second (first x)))))
+                              filtered-list)))) " " 
+                    (second (second (first 
+                                     (filter (lambda (x) 
+                                               (= (min-day list-days)
+                                                  (day (second (first x)))))
+                              filtered-list)))))]
+    [(> (length filtered-list) 3) 
+     (string-append (second (first (first 
+                                    (filter (lambda (x) 
+                                              (= (min-day list-days)
+                                                      (day (second (first x)))))
+                                            filtered-list)))) " " 
+                    (second (second (first 
+                                    (filter (lambda (x) 
+                                              (= (min-day list-days) 
+                                                 (day (second (first x)))))
+                                            filtered-list)))))])))
+;;-----------------------------------------------------------------------------
+(define (room-status building room day time)
+  (local
+    [(define result (uw-api (string-append "/buildings/" building "/" 
+                                       (number->string room) "/courses")))
+      ;;(member? x lst) Consumes a type x, and determines if it is in a list
+      ;; member?: Any (listof Any) -> Bool 
+     (define (member? x lst)
+           (not (false? (member x lst))))
+     ;;(get-start-time lst)Consumes a uw-api and outputs the start times
+     ;;get-start-time: (listof (listof Str)) -> (listof (listof Str))
+   (define (get-start-time lst) 
+   (second (first (filter (lambda (x)(string=? "start_time" (first x))) lst))))
+     ;;(get-end-time lst)Consumes a uw-api and outputs the end times
+     ;;get-end-time: (listof (listof Str)) -> (listof (listof Str))
+   (define (get-end-time lst) 
+   (second (first (filter (lambda (x)(string=? "end_time" (first x))) lst))))
+     ;;(start-value lst) Consumes a uw-api and outputs the start values
+     ;;start-value: (listof (listof Str)) -> Nat
+   (define (start-value lst)
+   (string->number (string-append (substring (get-start-time lst) 0 2)
+                                    (substring (get-start-time lst) 3 5))))
+     ;;(end-value lst) Consumes a uw-api and outputs the end values
+     ;; end-value: (listof (listof Str)) -> Nat
+    (define (end-value lst)
+    (string->number (string-append (substring (get-end-time lst) 0 2)
+                                    (substring (get-end-time lst) 3 5))))
+    ;;(is-period? lst) Consumes a uw-api and filters the lists for the lists 
+    ;; containing the time periods that correspond t the given time.
+    ;;is-period?: (listof (listof Str)) -> (listof (listof Str))
+    (define (is-period? lst)
+      (cond
+        [(or
+          (and (>= (string->number 
+                   (string-append  (substring time 0 2)
+                                   (substring time 3 5))) 
+                   (start-value lst))
+               (<= (string->number 
+                    (string-append (substring time 0 2)
+                                   (substring time 3 5))) 
+                   (end-value lst)))
+          (and (<= (string->number 
+                   (string-append (substring time 0 2)
+                                   (substring time 3 5))) 
+                   (start-value lst))
+               (>= (string->number 
+                    (string-append (substring time 0 2)
+                                   (substring time 3 5))) 
+                   (end-value lst)))) #t]
+        [else #f]))
+     ;;(get-days lst)Consumes a list and filters the lists for the days' lists
+     ;; get-days:(listof (listof Str)) -> (listof (listof Str))
+    (define (get-days lst)
+      (second (first (filter (lambda (x) (string=? (first x) "weekdays"))lst))))
+     ;;(get-subject lst) Consumes a list and filters the lists for the subjects'
+     ;; lists.
+     ;; get-subject:(listof (listof Str)) -> (listof (listof Str))
+     (define (get-subject lst)
+      (second (first (filter (lambda (x) (string=? (first x) "subject"))lst))))
+     ;;(get-catalog lst) Consumes a list and filters the lists for the catalogs' 
+     ;; lists.
+     ;; get-catalog:(listof (listof Str)) -> (listof (listof Str))
+     (define (get-catalog lst)
+      (second (first (filter (lambda (x) (string=? (first x) "catalog_number"))
+                             lst))))
+     ;;(get-title lst) Consumes a list and filters the lists for the titles' 
+     ;; lists.
+     ;; get-title:(listof (listof Str)) -> (listof (listof Str))
+     (define (get-title lst)
+      (second (first (filter (lambda (x) (string=? (first x) "title"))lst))))
+     ;;(is-day? lst) Consumes a list and filter's the list for elements with
+     ;; the given day
+     ;; is-day?: (listof (listof Str)) -> (listof (listof Str))
+     (define (is-day? lst)
+      (cond
+        [(or
+          (string=? day (substring (get-days lst) 0 1))
+          (string=? day (substring (get-days lst) 1)))#t]
+        [else #f]))]
+    
+    (cond
+      [(or
+        (empty? (filter is-period? result))
+        (empty? (filter is-day? (filter is-period? result)))) "FREE"]
+      [else (string-append 
+             (get-subject (first (filter is-day? (filter is-period? result)))) 
+             " " (get-catalog (first (filter is-day? (filter is-period? result)
+                                             ))) " "
+             (get-title (first (filter is-day? (filter is-period? result)))))])
+   ))
